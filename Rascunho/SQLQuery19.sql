@@ -1,0 +1,3 @@
+select *
+from LOJA_VENDA_PRODUTO
+where CODIGO_FILIAL ='BRS070'

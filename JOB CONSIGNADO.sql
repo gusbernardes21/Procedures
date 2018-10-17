@@ -1,0 +1,114 @@
+  IF OBJECT_ID('tempdb..#tNFCliente') IS NOT NULL
+  BEGIN
+    DROP TABLE #tNFCliente
+  END
+
+DECLARE @iQtdeDias       INT          = 5 
+      , @CODIGO_CLIENTE  VARCHAR(100) = NULL 
+      , @CODIGO_FILIAL   CHAR(6)      = NULL 
+      , @MinEmissao      DATETIME     = NULL 
+      , @MaxEmissao      DATETIME     = NULL 
+      , @MaxRetorno      DATETIME     = NULL 
+      , @Consignado      INT          = NULL 
+
+
+  SELECT ROW_NUMBER() OVER(ORDER BY CODIGO_FILIAL ASC)  AS NUMERO_LINHA 
+       , CODIGO_CLIENTE
+       , CODIGO_FILIAL
+       , NF_NUMERO
+       , EMISSAO
+       , cProcessado ='0' 
+    INTO #tNFCliente
+    FROM LINX..LOJA_NOTA_FISCAL LNF
+   WHERE LNF.NATUREZA_OPERACAO_CODIGO = '5917'    
+	    AND LNF.DATA_CANCELAMENTO IS NULL
+     AND LNF.STATUS_NFE               = '5'
+     AND LNF.CODIGO_CLIENTE IS NOT NULL 
+ORDER BY CODIGO_FILIAL ASC 
+       , CODIGO_CLIENTE
+       , EMISSAO ASC 
+
+
+ 
+  WHILE EXISTS ( SELECT TOP  1 1 
+                   FROM #tNFCliente 
+                  WHERE cProcessado ='0' )
+  BEGIN
+    IF OBJECT_ID('tempdb..#tApoioLoopNF') IS NOT NULL
+    BEGIN
+      DROP TABLE #tApoioLoopNF
+    END
+   SELECT TOP 1 @CODIGO_CLIENTE=  CODIGO_CLIENTE
+        , @CODIGO_FILIAL = CODIGO_FILIAL 
+        , @MinEmissao = MIN(EMISSAO) 
+     FROM #tNFCliente   
+    WHERE cProcessado ='0'
+    GROUP BY CODIGO_CLIENTE, CODIGO_FILIAL 
+      ORDER BY CODIGO_FILIAL ASC 
+  
+  SET @MaxEmissao  = DATEADD(DD,@iQtdeDias, @MinEmissao) 
+
+   SELECT NUMERO_LINHA
+        , CODIGO_FILIAL
+        , NF_NUMERO
+        , CODIGO_CLIENTE
+        , EMISSAO 
+     INTO #tApoioLoopNF
+     FROM #tNFCliente
+    WHERE CODIGO_CLIENTE= @CODIGO_CLIENTE
+      AND CODIGO_FILIAL = @CODIGO_FILIAL
+      AND cProcessado ='0' 
+      AND EMISSAO BETWEEN @MinEmissao AND @MaxEmissao 
+
+
+    SELECT @Consignado = MAX(CODIGO_CONSIGADO) + 1 
+      FROM WAREHOUSE..SHBI_TAB_CONSIGNADO
+   
+
+  INSERT INTO WAREHOUSE..SHBI_TAB_CONSIGNADO
+
+    SELECT @Consignado AS CODIGO_CONSIGADO
+         , CODIGO_CLIENTE 
+         , MIN(EMISSAO) AS DATA_EMISSAO
+         , MAX(EMISSAO) AS DATA_RETORNO
+         , CODIGO_FILIAL
+      FROM #tApoioLoopNF 
+  GROUP BY CODIGO_CLIENTE
+         , CODIGO_FILIAL 
+
+
+
+
+INSERT INTO WAREHOUSE..SHBI_TAB_CONSIGNADO_NF
+
+CODIGO_CONSIGNADO
+ITEM
+NUMERO_NF_SAIDA
+SERIE_NF_SAIDA
+CODIGO_FILIAL_NF_SAIDA
+NF_EMISSAO_SAIDA
+VALOR_NF_SAIDA
+QUANTIDADE_NF_SAIDA
+NUMERO_NF_RETORNO
+SERIE_NF_RETORNO
+CODIGO_FILIAL_NF_RETORNO
+NF_EMISSAO_RETORNO
+VALOR_NF_RETORNO
+QUANTIDADE_NF_RETORNO
+FROM #tApoioLoopNF
+
+
+
+
+     UPDATE #tNFCliente
+        SET cProcessado  = '1'
+       FROM #tNFCliente 
+            INNER JOIN #tApoioLoopNF ON #tApoioLoopNF.NUMERO_LINHA = #tNFCliente.NUMERO_LINHA
+
+  END 
+
+
+
+SELECT *
+FROM WAREHOUSE..SHBI_TAB_CONSIGNADO_NF
+ORDER BY 1 
